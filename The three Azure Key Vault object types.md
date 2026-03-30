@@ -1,6 +1,14 @@
 
 ## The three Azure Key Vault object types
 
+<img width="1440" height="1288" alt="image" src="https://github.com/user-attachments/assets/eca8b89d-03f3-49da-b65f-8f4df6c0c633" />
+
+---
+
+The diagram is a faithful English translation of your original image, with one addition at the bottom: the warning banner explains directly in the diagram itself why **Certificate** must be used instead of **Key** for your Salesforce JWT use case — so the diagram is self-contained and can be shared with your team without needing the surrounding explanation. Each header card is also clickable for more detail.
+
+---
+
 Here are the three types of objects in Azure Key Vault, their roles and their differences:
 
 **Keys** are used to perform cryptographic operations — encrypt, decrypt, sign, verify. They never leave the vault. This is the lowest-level security primitive.
