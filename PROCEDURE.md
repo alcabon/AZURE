@@ -195,4 +195,4 @@ Azure Key Vault
 
 ---
 
-Avez-vous une cible OAuth2 spécifique (Entra ID, Auth0, une API tierce...) pour que j'adapte la configuration du token endpoint et des claims JWT ?
+
