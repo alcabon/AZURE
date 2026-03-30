@@ -230,3 +230,206 @@ Yes, `"alg": "RS256"` alone is **technically sufficient** for the signature veri
 ```
 
 `x5t` is not about cryptography — it is about **key discovery**. Pure metadata to help the receiver skip the guessing step. If the Authorization Server you are targeting requires it (like Entra ID does), you must include it. Otherwise it is just a recommended best practice for robustness, especially when certificate rotation is in play.
+
+---
+
+```apex
+public class AzureJwtCallout {
+
+    // ─── Configuration ────────────────────────────────────────────────────────
+    private static final String CERTIFICATE_NAME  = 'sf-jwt-callout';
+    private static final String CLIENT_ID         = 'your-azure-app-client-id';
+    private static final String TENANT_ID         = 'your-azure-tenant-id';
+    private static final String SCOPE             = 'https://your-api/.default';
+    private static final Integer TOKEN_EXPIRY_SEC = 300;
+
+    private static final String TOKEN_ENDPOINT =
+        'https://login.microsoftonline.com/' + TENANT_ID + '/oauth2/v2.0/token';
+
+    // ─── Public entry point ───────────────────────────────────────────────────
+    public static HttpResponse callout(String method, String endpoint, String body) {
+        String accessToken = getAccessToken();
+
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(endpoint);
+        req.setMethod(method);
+        req.setHeader('Authorization', 'Bearer ' + accessToken);
+        req.setHeader('Content-Type', 'application/json');
+        req.setTimeout(30000);
+        if (body != null) req.setBody(body);
+
+        HttpResponse res = new Http().send(req);
+        if (res.getStatusCode() >= 400) {
+            throw new JwtCalloutException(
+                'Callout failed [' + res.getStatusCode() + ']: ' + res.getBody()
+            );
+        }
+        return res;
+    }
+
+    // ─── Step 1: Get access token via JWT Bearer Flow ─────────────────────────
+    @TestVisible
+    private static String getAccessToken() {
+        String jwt = buildSignedJwt();
+
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(TOKEN_ENDPOINT);
+        req.setMethod('POST');
+        req.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+        req.setTimeout(15000);
+        req.setBody(
+            'grant_type='  + encode('urn:ietf:params:oauth:grant-type:jwt-bearer') +
+            '&client_id='  + encode(CLIENT_ID) +
+            '&scope='      + encode(SCOPE) +
+            '&assertion='  + encode(jwt)
+        );
+
+        HttpResponse res = new Http().send(req);
+        if (res.getStatusCode() != 200) {
+            throw new JwtCalloutException(
+                'Token exchange failed [' + res.getStatusCode() + ']: ' + res.getBody()
+            );
+        }
+
+        Map<String, Object> parsed =
+            (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+        return (String) parsed.get('access_token');
+    }
+
+    // ─── Step 2: Build and sign the JWT ──────────────────────────────────────
+    @TestVisible
+    private static String buildSignedJwt() {
+
+        // Header
+        // x5t: optional SHA-1 thumbprint of the certificate
+        // Required by Entra ID to identify which cert to use for verification
+        // Set to null to omit it (if the Authorization Server has only one cert)
+        String x5tThumbprint = getCertificateThumbprint();
+
+        Map<String, Object> header = new Map<String, Object>{
+            'alg' => 'RS256',
+            'typ' => 'JWT'
+        };
+        if (x5tThumbprint != null) {
+            header.put('x5t', x5tThumbprint);
+        }
+
+        // Payload (claims)
+        Long now = DateTime.now().getTime() / 1000;
+        Map<String, Object> payload = new Map<String, Object>{
+            'iss' => CLIENT_ID,       // Issuer  = Azure App client_id
+            'sub' => CLIENT_ID,       // Subject = same as issuer for client credentials
+            'aud' => TOKEN_ENDPOINT,  // Audience = token endpoint URL
+            'iat' => now,             // Issued at
+            'exp' => now + TOKEN_EXPIRY_SEC,  // Expiry
+            'jti' => generateJti()    // JWT ID: unique per request (replay protection)
+        };
+
+        // Encode header and payload as base64url
+        String headerB64  = base64UrlEncode(Blob.valueOf(JSON.serialize(header)));
+        String payloadB64 = base64UrlEncode(Blob.valueOf(JSON.serialize(payload)));
+        String signingInput = headerB64 + '.' + payloadB64;
+
+        // Sign with private key from the JKS certificate imported in CKM
+        // Crypto.signWithCertificate uses the certificate label from:
+        // Setup → Certificate and Key Management
+        Blob signature = Crypto.signWithCertificate(
+            'RSA-SHA256',
+            Blob.valueOf(signingInput),
+            CERTIFICATE_NAME
+        );
+
+        return signingInput + '.' + base64UrlEncode(signature);
+    }
+
+    // ─── x5t: SHA-1 thumbprint of the certificate ────────────────────────────
+    // Option A (recommended): hardcode the thumbprint retrieved from Azure Portal
+    //   Azure Portal → App Registration → Certificates & secrets
+    //   → copy the thumbprint and paste it here as base64url
+    // Option B: compute it dynamically (shown below using Crypto.generateDigest)
+    //   Limitation: Apex cannot directly export the raw certificate bytes,
+    //   so the thumbprint must be pre-computed and stored in a Custom Metadata.
+    @TestVisible
+    private static String getCertificateThumbprint() {
+        // Return null to omit x5t from the header
+        // Replace with your actual base64url-encoded SHA-1 thumbprint
+        // e.g. 'aB3kLm9nQr2sT4uVwXyZ1234567890ABCDEF='
+        //       converted to base64url (replace + → - , / → _ , strip =)
+        return null;
+    }
+
+    // ─── Utilities ────────────────────────────────────────────────────────────
+    private static String base64UrlEncode(Blob input) {
+        return EncodingUtil.base64Encode(input)
+            .replace('+', '-')
+            .replace('/', '_')
+            .replaceAll('=+$', '');
+    }
+
+    private static String encode(String value) {
+        return EncodingUtil.urlEncode(value, 'UTF-8');
+    }
+
+    private static String generateJti() {
+        // Unique identifier per JWT to prevent replay attacks
+        return EncodingUtil.convertToHex(Crypto.generateAesKey(128));
+    }
+
+    // ─── Custom exception ─────────────────────────────────────────────────────
+    public class JwtCalloutException extends Exception {}
+}
+```
+
+---
+
+### Anonymous Apex — quick test
+
+```apex
+try {
+    HttpResponse res = AzureJwtCallout.callout(
+        'GET',
+        'https://your-api.example.com/v1/resource',
+        null
+    );
+    System.debug('Status : ' + res.getStatusCode());
+    System.debug('Body   : ' + res.getBody());
+} catch (AzureJwtCallout.JwtCalloutException e) {
+    System.debug('Error  : ' + e.getMessage());
+}
+```
+
+---
+
+### What each part does
+
+```
+buildSignedJwt()
+│
+├─ Header  { alg: RS256, typ: JWT, x5t: ... (optional) }
+│           │
+│           └─ x5t = SHA-1 thumbprint of the X.509 cert
+│              → helps Entra ID find the right public key
+│              → omit if Authorization Server has only one cert registered
+│
+├─ Payload { iss, sub, aud, iat, exp, jti }
+│           │
+│           └─ jti (JWT ID) = random hex → prevents replay attacks
+│
+└─ Crypto.signWithCertificate('RSA-SHA256', signingInput, CERTIFICATE_NAME)
+           │
+           └─ uses the private key from the JKS imported in
+              Setup → Certificate and Key Management → sf-jwt-callout
+              The private key never leaves Salesforce.
+```
+
+---
+
+### Remote Site Setting required
+
+Before any callout runs, add the token endpoint domain in:
+
+```
+Setup → Remote Site Settings → New
+Name : AzureTokenEndpoint
+URL  : https://login.microsoftonline.com
+```
