@@ -1,6 +1,7 @@
 Here is the corrected and complete flow, now in English.
 
 
+<img width="1440" height="720" alt="image" src="https://github.com/user-attachments/assets/42db9b68-df95-44d1-a1a4-21675125c7cf" />
 
 
 ---
