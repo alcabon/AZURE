@@ -192,7 +192,15 @@ Azure Key Vault
                                                            → échange contre access_token
                                                            → appel API sécurisé
 ```
+Le diagramme montre les trois étapes du flux :
+
+**Dans Azure Key Vault**, le Certificate `sf-jwt-callout` contient les deux éléments créés ensemble — la clé privée RSA 2048 et le certificat X.509 public. Ils sont indissociables dans le Certificate object.
+
+**La commande `az keyvault secret download --encoding base64`** est le point de fusion : c'est elle qui extrait les deux éléments simultanément depuis le secret sous-jacent du Certificate (et non depuis `az keyvault certificate download` qui ne donne que la clé publique). Le résultat est un fichier **PFX / .p12** — le seul format qui encapsule clé privée + certificat ensemble et que Salesforce sait importer.
+
+**Dans Salesforce**, après import via *Certificate & Key Management*, la clé privée et le certificat sont stockés et protégés par la plateforme. La Named Credential peut ensuite les utiliser pour signer les JWT Bearer assertions à chaque callout OAuth2.
 
 ---
 
+<img width="1440" height="698" alt="image" src="https://github.com/user-attachments/assets/8bc29ff0-9d26-4546-806a-955737a4913f" />
 
