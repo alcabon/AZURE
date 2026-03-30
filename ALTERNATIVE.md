@@ -281,3 +281,136 @@ public class AzureKvSignedJwtCallout {
 https://login.microsoftonline.com   → Entra ID (both AKV auth and target token)
 https://your-vault.vault.azure.net  → Azure Key Vault Sign API
 ```
+
+---
+
+You are right. Let me correct the full picture clearly.
+
+The approach I described (AKV Sign API) is still a JWT Bearer flow — just with the signing delegated to AKV. The **real alternative** is simpler: drop JWT entirely and use **client_credentials** directly, with the `client_secret` stored in AKV as a **Secret object**.
+
+---
+
+## The three approaches side by side
+
+| | JWT Bearer + Certificate | JWT Bearer + AKV Sign API | Client Credentials |
+|---|---|---|---|
+| Grant type | `jwt-bearer` | `jwt-bearer` | `client_credentials` |
+| What Salesforce holds | Private key (in CKM) | `client_secret` (for AKV auth) | `client_secret` (for target API) |
+| AKV object used | **Certificate** | **Key** (non-exportable) | **Secret** |
+| Complexity | Medium | High (3 callouts per token) | Low |
+| Private key leaves AKV | Yes (exported to Salesforce) | Never | N/A — no private key |
+| Best for | Standard OAuth2 JWT setup | Strict key governance / compliance | Simplicity, server-to-server |
+
+---
+
+## Client Credentials flow — corrected Apex
+
+```apex
+public class AzureClientCredentialsCallout {
+
+    // ─── Configuration (from Protected Custom Setting) ────────────────────────
+    private static final String TENANT_ID     = getProtectedSetting('TENANT_ID');
+    private static final String CLIENT_ID     = getProtectedSetting('CLIENT_ID');
+    private static final String CLIENT_SECRET = getProtectedSetting('CLIENT_SECRET');
+    private static final String SCOPE         = 'https://your-api/.default';
+
+    private static final String TOKEN_ENDPOINT =
+        'https://login.microsoftonline.com/' + TENANT_ID + '/oauth2/v2.0/token';
+
+    // ─── Public entry point ───────────────────────────────────────────────────
+    public static HttpResponse callout(String method, String endpoint, String body) {
+        String accessToken = getAccessToken();
+
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(endpoint);
+        req.setMethod(method);
+        req.setHeader('Authorization', 'Bearer ' + accessToken);
+        req.setHeader('Content-Type', 'application/json');
+        req.setTimeout(30000);
+        if (body != null) req.setBody(body);
+
+        HttpResponse res = new Http().send(req);
+        if (res.getStatusCode() >= 400) {
+            throw new CalloutException(
+                'Callout failed [' + res.getStatusCode() + ']: ' + res.getBody()
+            );
+        }
+        return res;
+    }
+
+    // ─── Client Credentials token request ────────────────────────────────────
+    // No JWT, no certificate, no signing.
+    // Straightforward client_id + client_secret exchange.
+    @TestVisible
+    private static String getAccessToken() {
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(TOKEN_ENDPOINT);
+        req.setMethod('POST');
+        req.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+        req.setTimeout(15000);
+        req.setBody(
+            'grant_type=client_credentials' +
+            '&client_id='     + encode(CLIENT_ID) +
+            '&client_secret=' + encode(CLIENT_SECRET) +
+            '&scope='         + encode(SCOPE)
+        );
+
+        HttpResponse res = new Http().send(req);
+        if (res.getStatusCode() != 200) {
+            throw new CalloutException(
+                'Token request failed [' + res.getStatusCode() + ']: ' + res.getBody()
+            );
+        }
+
+        return (String) ((Map<String, Object>)
+            JSON.deserializeUntyped(res.getBody())).get('access_token');
+    }
+
+    // ─── Optional: retrieve client_secret from AKV at runtime ────────────────
+    // Instead of storing it in a Custom Setting, you can fetch it
+    // from AKV Secret on each callout (or cache it in a static variable).
+    //
+    // This requires a Managed Identity or a second client_credentials
+    // to authenticate to AKV itself — which reduces the benefit.
+    // For most cases, a Protected Custom Setting is sufficient.
+
+    private static String getProtectedSetting(String key) {
+        AKV_Settings__c s = AKV_Settings__c.getOrgDefaults();
+        if (key == 'TENANT_ID')     return s.Tenant_Id__c;
+        if (key == 'CLIENT_ID')     return s.Client_Id__c;
+        if (key == 'CLIENT_SECRET') return s.Client_Secret__c;
+        return null;
+    }
+
+    private static String encode(String value) {
+        return EncodingUtil.urlEncode(value, 'UTF-8');
+    }
+
+    public class CalloutException extends Exception {}
+}
+```
+
+---
+
+## When to choose which approach
+
+```
+Does your security policy prohibit client_secrets?
+│
+├─ YES → JWT Bearer is required
+│         │
+│         ├─ Can you export the private key?
+│         │   ├─ YES → Certificate in AKV → export PFX → JKS → Salesforce CKM
+│         │   └─ NO  → Key in AKV → Sign API (3 callouts per token, high complexity)
+│         │
+│         └─ Does the Authorization Server support client_assertion?
+│               YES → JWT Bearer works
+│               NO  → reconsider the architecture
+│
+└─ NO  → Client Credentials
+          Simple, reliable, lowest latency.
+          Store client_secret in a Protected Custom Setting.
+          Rotate it in AKV (Secret) and update the Custom Setting on rotation.
+```
+
+The client_credentials approach is perfectly valid and widely used for server-to-server integrations where the Authorization Server (Entra ID, etc.) supports it. JWT Bearer is only necessary when the security policy explicitly forbids secrets, or when the target requires certificate-based client authentication.
