@@ -1,0 +1,14 @@
+The glossary covers all terms used throughout our conversation, organized in 5 categories and searchable in real time. Here is a quick summary of what is covered:
+
+**Azure** — AKV, Entra ID, HSM, Managed Identity, RBAC, Service Principal
+
+**Salesforce** — CKM, Named Credential, Remote Site Settings, Protected Custom Setting
+
+**OAuth2 / JWT** — JWT, JWS, JWK, x5t, x5t#S256, alg, RS256, all JWT claims (iss, sub, aud, exp, iat, jti), Client Credentials grant, JWT Bearer grant
+
+**Cryptography** — RSA, EC, X.509, CN, SAN, CA, DER, SHA, TLS/SSL, mTLS, FIPS
+
+**File formats** — PFX/.p12, JKS, PEM, .cer/.crt, PKCS
+
+
+
