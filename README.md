@@ -109,7 +109,7 @@ az keyvault secret download \
 
 Le secret (`az keyvault secret download`) — et non `az keyvault certificate download` — est utilisé car c'est lui qui contient le PFX avec la clé privée.
 
-<img width="363" height="832" alt="image" src="https://github.com/user-attachments/assets/d64e5511-1aea-4b4f-9d22-de4aad058271" />
+<img width="343" height="680" alt="image" src="https://github.com/user-attachments/assets/07c509ee-425a-4a33-8946-de38d536445d" />
 
 
 ---
